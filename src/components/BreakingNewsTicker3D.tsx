@@ -10,8 +10,6 @@ import {
   MessageCircle,
   TrendingUp,
   Zap,
-  Volume2,
-  VolumeX,
   Pause,
   Play,
   Flame,
@@ -48,6 +46,7 @@ export const BreakingNewsTicker3D: React.FC<{
   const [tilt, setTilt] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
   const canvas3dRef = useRef<HTMLCanvasElement>(null);
+  const touchResumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // News ticker data items
   const tickerItems: TickerItem[] = [
@@ -148,18 +147,28 @@ export const BreakingNewsTicker3D: React.FC<{
           return true;
         });
 
-  // Three.js 3D Emblem Animation in Ticker Header
+  // Clean double items list for exact seamless 50% loop
+  const marqueeItems = [...filteredItems, ...filteredItems];
+
+  // Three.js 3D Emblem Animation in Ticker Header (Mobile & Desktop compatible)
   useEffect(() => {
     const canvas = canvas3dRef.current;
     if (!canvas) return;
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      alpha: true,
-      antialias: true,
-    });
-    renderer.setSize(48, 48);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    let renderer: THREE.WebGLRenderer | null = null;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        alpha: true,
+        antialias: true,
+        powerPreference: 'low-power',
+      });
+      renderer.setSize(44, 44);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    } catch {
+      // Graceful fallback if WebGL fails on older mobile browsers
+      return;
+    }
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
@@ -169,8 +178,8 @@ export const BreakingNewsTicker3D: React.FC<{
     const geometry = new THREE.OctahedronGeometry(1.0, 0);
     const material = new THREE.MeshStandardMaterial({
       color: theme === 'dark' ? 0xf2ca50 : 0xd4af37,
-      roughness: 0.15,
-      metalness: 0.95,
+      roughness: 0.2,
+      metalness: 0.9,
       wireframe: false,
     });
     const gemMesh = new THREE.Mesh(geometry, material);
@@ -187,8 +196,8 @@ export const BreakingNewsTicker3D: React.FC<{
     const wireMesh = new THREE.Mesh(wireGeo, wireMat);
     scene.add(wireMesh);
 
-    // Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+    // Ambient & Point Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
     scene.add(ambientLight);
 
     const pointLight = new THREE.PointLight(0xffffff, 2.5);
@@ -196,41 +205,83 @@ export const BreakingNewsTicker3D: React.FC<{
     scene.add(pointLight);
 
     let animationFrameId: number;
+    let isMounted = true;
+
     const animate = () => {
+      if (!isMounted) return;
       animationFrameId = requestAnimationFrame(animate);
       gemMesh.rotation.x += 0.015;
       gemMesh.rotation.y += 0.025;
       wireMesh.rotation.x -= 0.01;
       wireMesh.rotation.y -= 0.015;
-      renderer.render(scene, camera);
+      if (renderer) {
+        renderer.render(scene, camera);
+      }
     };
     animate();
 
     return () => {
+      isMounted = false;
       cancelAnimationFrame(animationFrameId);
       geometry.dispose();
       material.dispose();
       wireGeo.dispose();
       wireMat.dispose();
-      renderer.dispose();
+      if (renderer) {
+        renderer.dispose();
+      }
     };
   }, [theme]);
 
-  // Handle 3D Tilt on Mouse Move
+  // Handle 3D Tilt ONLY on pointer devices with hover capability (e.g. desktop mice)
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (typeof window !== 'undefined' && !window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      return;
+    }
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left - rect.width / 2;
     const y = e.clientY - rect.top - rect.height / 2;
     setTilt({
-      x: -(y / rect.height) * 8,
-      y: (x / rect.width) * 8,
+      x: -(y / rect.height) * 6,
+      y: (x / rect.width) * 6,
     });
   };
 
   const handleMouseLeave = () => {
     setTilt({ x: 0, y: 0 });
+    setIsPaused(false);
   };
+
+  // Safe hover for desktop mice only (prevents locking on iOS/Android touch)
+  const handleMouseEnterDesktop = () => {
+    if (typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      setIsPaused(true);
+    }
+  };
+
+  // Touch handlers for mobile & tablets (pauses briefly on touch, then automatically resumes)
+  const handleTouchStart = () => {
+    if (touchResumeTimeoutRef.current) {
+      clearTimeout(touchResumeTimeoutRef.current);
+    }
+    setIsPaused(true);
+  };
+
+  const handleTouchEnd = () => {
+    // Auto-resume scrolling after 1.5 seconds on mobile so it never gets stuck!
+    touchResumeTimeoutRef.current = setTimeout(() => {
+      setIsPaused(false);
+    }, 1500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (touchResumeTimeoutRef.current) {
+        clearTimeout(touchResumeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleItemClick = (item: TickerItem) => {
     if (item.linkAction === 'whatsapp') {
@@ -245,47 +296,50 @@ export const BreakingNewsTicker3D: React.FC<{
     }
   };
 
+  // Dynamic animation duration based on speed setting
+  const scrollDuration = 32 / speed;
+
   return (
     <section
       aria-label="Breaking News 3D Ticker"
-      className="relative z-30 w-full pt-20 sm:pt-24 pb-2 px-3 sm:px-6 max-w-7xl mx-auto"
+      className="relative z-30 w-full pt-20 sm:pt-24 pb-2 px-2.5 sm:px-6 max-w-7xl mx-auto"
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
-      {/* 3D Perspective Wrapper */}
+      {/* 3D Perspective Container */}
       <div
         ref={containerRef}
         style={{
           transform: `perspective(1000px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`,
           transition: 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)',
         }}
-        className={`relative overflow-hidden rounded-3xl border backdrop-blur-2xl shadow-2xl transition-all duration-300 ${
+        className={`relative overflow-hidden rounded-2xl sm:rounded-3xl border backdrop-blur-2xl shadow-2xl transition-all duration-300 ${
           theme === 'dark'
             ? 'bg-[#14141a]/95 border-[#f2ca50]/30 shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_35px_rgba(242,202,80,0.12)]'
             : 'bg-white/95 border-[#c49a1b]/40 shadow-[0_20px_40px_rgba(0,0,0,0.08),0_0_25px_rgba(196,154,27,0.15)]'
         }`}
       >
-        {/* Top 3D Metallic Golden Header / Control Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-2.5 border-b border-white/10 dark:border-white/10 bg-gradient-to-r from-transparent via-[#f2ca50]/5 to-transparent">
-          {/* Left / Right Live Emblem Badge */}
-          <div className="flex items-center gap-3">
+        {/* Top 3D Header / Control Bar (Mobile-Optimized) */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 px-3 sm:px-6 py-2 border-b border-white/10 dark:border-white/10 bg-gradient-to-r from-transparent via-[#f2ca50]/5 to-transparent">
+          {/* Left Live Badge */}
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Real 3D Rotating Three.js Gem */}
-            <div className="relative flex items-center justify-center w-8 h-8 rounded-xl bg-[#f2ca50]/10 border border-[#f2ca50]/30 overflow-hidden shadow-inner">
-              <canvas ref={canvas3dRef} className="w-8 h-8" />
+            <div className="relative flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-[#f2ca50]/10 border border-[#f2ca50]/30 overflow-hidden shadow-inner flex-shrink-0">
+              <canvas ref={canvas3dRef} className="w-7 h-7 sm:w-8 sm:h-8" />
             </div>
 
             {/* Pulsing Live Broadcast Marker */}
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-gradient-to-r from-[#ef4444]/20 via-[#ef4444]/10 to-transparent border border-[#ef4444]/40">
-              <span className="relative flex h-2.5 w-2.5">
+            <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 py-1 rounded-full bg-gradient-to-r from-[#ef4444]/20 via-[#ef4444]/10 to-transparent border border-[#ef4444]/40 flex-shrink-0">
+              <span className="relative flex h-2 w-2 sm:h-2.5 sm:w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#ef4444] opacity-80"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#ef4444]"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 sm:h-2.5 sm:w-2.5 bg-[#ef4444]"></span>
               </span>
-              <span className="text-[11px] font-black tracking-widest text-[#ef4444] uppercase font-mono">
-                {language === 'ar' ? 'عاجل • شريط البث الحي' : 'LIVE 3D BROADCAST'}
+              <span className="text-[10px] sm:text-[11px] font-black tracking-widest text-[#ef4444] uppercase font-mono">
+                {language === 'ar' ? 'عاجل • بث حي' : 'LIVE 3D'}
               </span>
             </div>
 
-            {/* Professional Headline Tagline */}
+            {/* Professional Tagline (desktop/tablet only) */}
             <span
               className={`hidden md:inline-flex items-center gap-1.5 text-xs font-semibold ${
                 theme === 'dark' ? 'text-[#a1a1aa]' : 'text-[#6b7280]'
@@ -294,27 +348,27 @@ export const BreakingNewsTicker3D: React.FC<{
               <Flame className="w-3.5 h-3.5 text-[#f2ca50]" />
               <span>
                 {language === 'ar'
-                  ? 'آخر التحديثات والإنجازات المعتمدة • المهندس محمد ظهير'
-                  : 'Verified Milestones & Real-time Live Updates • Mohammed Dhair'}
+                  ? 'آخر الإنجازات المعتمدة • المهندس محمد ظهير'
+                  : 'Verified Milestones • Mohammed Dhair'}
               </span>
             </span>
           </div>
 
           {/* Right Controls: Category Filter & Speed/Pause */}
-          <div className="flex items-center gap-2">
-            {/* Category Quick Selector */}
-            <div className="hidden lg:flex items-center gap-1 bg-black/20 dark:bg-black/30 p-1 rounded-xl border border-white/5">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Category Quick Selector (Scrollable on small phones) */}
+            <div className="flex items-center gap-1 bg-black/20 dark:bg-black/30 p-0.5 sm:p-1 rounded-xl border border-white/5 overflow-x-auto max-w-[200px] sm:max-w-none no-scrollbar">
               {[
                 { id: 'all', ar: 'الكل', en: 'All' },
-                { id: 'flutter', ar: 'فلاتر والمتاجر', en: 'Flutter & Stores' },
-                { id: 'ai', ar: 'الذكاء الاصطناعي', en: 'AI & LLMs' },
-                { id: 'data', ar: 'البيانات', en: 'Data Ops' },
-                { id: 'upwork', ar: 'التعاقد والتواصل', en: 'Upwork & WA' },
+                { id: 'flutter', ar: 'فلاتر', en: 'Flutter' },
+                { id: 'ai', ar: 'الذكاء الاصطناعي', en: 'AI' },
+                { id: 'data', ar: 'البيانات', en: 'Data' },
+                { id: 'upwork', ar: 'التواصل', en: 'Connect' },
               ].map((cat) => (
                 <button
                   key={cat.id}
                   onClick={() => setActiveCategory(cat.id)}
-                  className={`px-2.5 py-0.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
+                  className={`px-2 sm:px-2.5 py-0.5 rounded-lg text-[10px] sm:text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
                     activeCategory === cat.id
                       ? 'bg-[#f2ca50] text-[#131318] font-bold shadow-sm'
                       : 'text-[#a1a1aa] hover:text-white'
@@ -328,7 +382,7 @@ export const BreakingNewsTicker3D: React.FC<{
             {/* Play/Pause Toggle */}
             <button
               onClick={() => setIsPaused((prev) => !prev)}
-              className={`p-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1 text-xs font-mono ${
+              className={`p-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1 text-xs font-mono select-none ${
                 theme === 'dark'
                   ? 'bg-[#1b1b22] border-white/10 hover:border-[#f2ca50] text-[#e4e1e9]'
                   : 'bg-[#f3f4f6] border-black/10 hover:border-[#8c6800] text-[#1a1a20]'
@@ -342,7 +396,7 @@ export const BreakingNewsTicker3D: React.FC<{
             {/* Speed Toggle */}
             <button
               onClick={() => setSpeed((prev) => (prev === 1 ? 1.75 : prev === 1.75 ? 0.6 : 1))}
-              className={`px-2 py-1 rounded-xl border text-[10px] font-bold font-mono transition-all cursor-pointer ${
+              className={`px-2 py-1 rounded-xl border text-[10px] font-bold font-mono transition-all cursor-pointer select-none ${
                 theme === 'dark'
                   ? 'bg-[#1b1b22] border-white/10 hover:border-[#37beff] text-[#37beff]'
                   : 'bg-[#f3f4f6] border-black/10 hover:border-[#0468d7] text-[#0468d7]'
@@ -354,27 +408,30 @@ export const BreakingNewsTicker3D: React.FC<{
           </div>
         </div>
 
-        {/* The 3D Infinite Marquee Ribbon */}
+        {/* The 3D Infinite Hardware-Accelerated Ribbon (Universal Mobile/iPad/Web) */}
         <div
-          className="relative py-3.5 overflow-hidden flex items-center group cursor-grab active:cursor-grabbing"
-          onMouseEnter={() => setIsPaused(true)}
-          onMouseLeave={() => setIsPaused(false)}
+          className="ticker-marquee-wrapper py-2.5 sm:py-3.5 flex items-center group cursor-grab active:cursor-grabbing select-none"
+          onMouseEnter={handleMouseEnterDesktop}
+          onMouseLeave={handleMouseLeave}
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
         >
-          {/* Side Fade Gradients for 3D Depth */}
-          <div className="absolute left-0 top-0 bottom-0 w-12 sm:w-24 bg-gradient-to-r from-[#14141a] dark:from-[#14141a] to-transparent z-10 pointer-events-none" />
-          <div className="absolute right-0 top-0 bottom-0 w-12 sm:w-24 bg-gradient-to-l from-[#14141a] dark:from-[#14141a] to-transparent z-10 pointer-events-none" />
+          {/* Side Fade Gradients */}
+          <div className="absolute left-0 top-0 bottom-0 w-8 sm:w-20 bg-gradient-to-r from-[#14141a] dark:from-[#14141a] to-transparent z-10 pointer-events-none" />
+          <div className="absolute right-0 top-0 bottom-0 w-8 sm:w-20 bg-gradient-to-l from-[#14141a] dark:from-[#14141a] to-transparent z-10 pointer-events-none" />
 
-          {/* Marquee Track 1 & 2 for Seamless Loop */}
+          {/* Marquee Track: Seamlessly moves from 0% to -50% */}
           <div
-            className="flex items-center gap-4 sm:gap-6 whitespace-nowrap will-change-transform"
+            className="ticker-marquee-track flex items-center gap-3 sm:gap-6 whitespace-nowrap"
             style={{
-              animation: `marquee-scroll ${32 / speed}s linear infinite`,
+              animation: `ticker-marquee-scroll ${scrollDuration}s linear infinite`,
+              WebkitAnimation: `ticker-marquee-scroll ${scrollDuration}s linear infinite`,
               animationPlayState: isPaused ? 'paused' : 'running',
+              WebkitAnimationPlayState: isPaused ? 'paused' : 'running',
               direction: 'ltr',
             }}
           >
-            {/* Render items twice to ensure endless looping */}
-            {[...filteredItems, ...filteredItems, ...filteredItems].map((item, idx) => {
+            {marqueeItems.map((item, idx) => {
               const Icon = item.icon;
               return (
                 <div
@@ -383,7 +440,7 @@ export const BreakingNewsTicker3D: React.FC<{
                   style={{
                     transformStyle: 'preserve-3d',
                   }}
-                  className={`inline-flex items-center gap-3 px-4 py-2.5 rounded-2xl border transition-all duration-300 hover:scale-[1.03] hover:-translate-y-1 cursor-pointer select-none group/card ${
+                  className={`inline-flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl sm:rounded-2xl border transition-all duration-300 hover:scale-[1.02] sm:hover:scale-[1.03] hover:-translate-y-0.5 sm:hover:-translate-y-1 cursor-pointer select-none group/card ${
                     theme === 'dark'
                       ? 'bg-[#1b1b24]/90 border-white/10 hover:border-[#f2ca50]/60 shadow-lg hover:shadow-[0_10px_25px_rgba(242,202,80,0.15)]'
                       : 'bg-[#f7f4ec]/95 border-black/10 hover:border-[#8c6800]/50 shadow-md hover:shadow-[0_10px_25px_rgba(140,104,0,0.15)]'
@@ -391,20 +448,20 @@ export const BreakingNewsTicker3D: React.FC<{
                 >
                   {/* Item Icon with Glow Badge */}
                   <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md transition-transform group-hover/card:rotate-6"
+                    className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md transition-transform group-hover/card:rotate-6"
                     style={{
                       backgroundColor: `${item.tagColor}18`,
                       border: `1px solid ${item.tagColor}45`,
                     }}
                   >
-                    <Icon className="w-5 h-5" style={{ color: item.tagColor }} />
+                    <Icon className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: item.tagColor }} />
                   </div>
 
                   {/* Headline and Subtext */}
                   <div className="flex flex-col text-left rtl:text-right">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
                       <span
-                        className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md"
+                        className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-1.5 sm:px-2 py-0.5 rounded-md"
                         style={{
                           backgroundColor: `${item.tagColor}25`,
                           color: item.tagColor,
@@ -416,19 +473,19 @@ export const BreakingNewsTicker3D: React.FC<{
                         {language === 'ar' ? item.headlineAr : item.headlineEn}
                       </h4>
                       {item.badgeAr && (
-                        <span className="hidden sm:inline-block text-[9px] font-black px-1.5 py-0.5 rounded bg-white/10 text-[#f2ca50] border border-[#f2ca50]/30 font-mono">
+                        <span className="hidden md:inline-block text-[9px] font-black px-1.5 py-0.5 rounded bg-white/10 text-[#f2ca50] border border-[#f2ca50]/30 font-mono">
                           {language === 'ar' ? item.badgeAr : item.badgeEn}
                         </span>
                       )}
                     </div>
-                    <p className={`text-[11px] mt-0.5 ${theme === 'dark' ? 'text-[#a1a1aa]' : 'text-[#4b5563]'}`}>
+                    <p className={`text-[10px] sm:text-[11px] mt-0.5 line-clamp-1 sm:line-clamp-none ${theme === 'dark' ? 'text-[#a1a1aa]' : 'text-[#4b5563]'}`}>
                       {language === 'ar' ? item.subAr : item.subEn}
                     </p>
                   </div>
 
                   {/* Jump Action Indicator */}
-                  <div className="pl-2 rtl:pr-2 flex-shrink-0 text-[#f2ca50] opacity-70 group-hover/card:opacity-100 group-hover/card:translate-x-1 rtl:group-hover/card:-translate-x-1 transition-all">
-                    {isRtl ? <ArrowLeft className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
+                  <div className="pl-1.5 sm:pl-2 rtl:pr-1.5 sm:rtl:pr-2 flex-shrink-0 text-[#f2ca50] opacity-70 group-hover/card:opacity-100 group-hover/card:translate-x-1 rtl:group-hover/card:-translate-x-1 transition-all">
+                    {isRtl ? <ArrowLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
                   </div>
                 </div>
               );
@@ -436,18 +493,6 @@ export const BreakingNewsTicker3D: React.FC<{
           </div>
         </div>
       </div>
-
-      {/* Embedded CSS Keyframes for Super-Smooth Infinite 3D Marquee */}
-      <style>{`
-        @keyframes marquee-scroll {
-          0% {
-            transform: translateX(0%);
-          }
-          100% {
-            transform: translateX(-50%);
-          }
-        }
-      `}</style>
     </section>
   );
 };

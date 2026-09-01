@@ -349,6 +349,49 @@ html.light ::-webkit-scrollbar-thumb {
   animation: float-gentle 4.5s ease-in-out infinite;
 }
 
+/* Continuous Hardware-Accelerated 3D Ticker Marquee for Mobile, iPad & Desktop */
+@keyframes ticker-marquee-scroll {
+  0% {
+    transform: translate3d(0, 0, 0);
+    -webkit-transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+    -webkit-transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@-webkit-keyframes ticker-marquee-scroll {
+  0% {
+    -webkit-transform: translate3d(0, 0, 0);
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    -webkit-transform: translate3d(-50%, 0, 0);
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.ticker-marquee-wrapper {
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 5%, black 95%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, black 5%, black 95%, transparent 100%);
+}
+
+.ticker-marquee-track {
+  display: inline-flex;
+  width: max-content;
+  will-change: transform;
+  -webkit-transform: translate3d(0, 0, 0);
+  transform: translate3d(0, 0, 0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  -webkit-perspective: 1000;
+  perspective: 1000;
+}
+
 /* 3D Metallic Specular Spheres */
 .metallic-gold-sphere {
   background: radial-gradient(circle at 35% 30%, #fff6cc 0%, #f2ca50 30%, #b8860b 70%, #4a3705 100%);
